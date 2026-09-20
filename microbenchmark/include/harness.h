@@ -1,5 +1,5 @@
 /*
- * Low-overhead microbenchmark harness for Cortex-M4 — BENCH /
+ * Low-overhead microbenchmark harness for Cortex-M — BENCH /
  * END_BENCH macro pair plus internal KERNEL_BEGIN / KERNEL_END helpers.
  *
  * Design goal: every measured rep brackets ONLY the second call into
@@ -78,8 +78,13 @@
 #ifdef __ASSEMBLER__
 
     .syntax unified
+#ifdef BOARD_RP2350
+    .cpu cortex-m33
+    .fpu fpv5-sp-d16
+#else
     .cpu cortex-m4
     .fpu fpv4-sp-d16
+#endif
     .thumb
 
 #ifdef PLATFORM_GEM5
@@ -151,7 +156,14 @@
      * start of the warmup + measured-rep loop.
      */
     .macro KERNEL_BEGIN name
+#ifdef BOARD_RP2350
+        /* The Pico SDK's default linker script collects .text* in XIP
+         * flash. Prefix the wrapper sections accordingly; the STM32 linker
+         * keeps using its historical section names and fixed addresses. */
+        .section .text.bench_entry,"ax",%progbits
+#else
         .section .bench_prologue,"ax",%progbits
+#endif
         .syntax unified
         .thumb
         .balign 4
@@ -161,12 +173,20 @@
 \name :
         START_ROI_SETUP
 
+#ifdef BOARD_RP2350
+        .section .text.bench_entry,"ax",%progbits
+#else
         .section .bench_prologue_snap,"ax",%progbits
+#endif
         .syntax unified
         .thumb
         START_ROI_SNAP
 
+#ifdef BOARD_RP2350
+        .section .text.bench_entry,"ax",%progbits
+#else
         .section .bench_body,"ax",%progbits
+#endif
         .syntax unified
         .thumb
         .balign 4
@@ -176,7 +196,11 @@
      * KERNEL_END: emit END_ROI in .bench_epilogue then return.
      */
     .macro KERNEL_END
+#ifdef BOARD_RP2350
+        .section .text.bench_entry,"ax",%progbits
+#else
         .section .bench_epilogue,"ax",%progbits
+#endif
         .syntax unified
         .thumb
         .balign 4

@@ -1,0 +1,84 @@
+{
+  "version": 4,
+  "cmakeMinimumRequired": {
+    "major": 3,
+    "minor": 20,
+    "patch": 0
+  },
+  "configurePresets": [
+    {
+      "name": "mac-pico2-local",
+      "displayName": "RP2350 / Pico 2 (local macOS toolchain)",
+      "generator": "Ninja",
+      "binaryDir": "${sourceDir}/build",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Release",
+        "PICO_BOARD": "pico2",
+        "PICO_SDK_PATH": "${sourceDir}/../../../pico-sdk",
+        "PICO_TOOLCHAIN_PATH": "${sourceDir}/../../../toolchains/gcc-arm-embedded/Payload"
+      }
+    },
+    {
+      "name": "mac-pico2-sweep",
+      "displayName": "RP2350 / Pico 2 incremental physical sweep",
+      "generator": "Ninja",
+      "binaryDir": "${sourceDir}/build-sweep",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Release",
+        "PICO_BOARD": "pico2",
+        "PICO_SDK_PATH": "${sourceDir}/../../../pico-sdk",
+        "PICO_TOOLCHAIN_PATH": "${sourceDir}/../../../toolchains/gcc-arm-embedded/Payload",
+        "RP2350_BENCH": "bench_nop16_8"
+      }
+    },
+    {
+      "name": "mac-pico2-riscv-local",
+      "displayName": "RP2350 / Pico 2 Hazard3 (local macOS toolchain)",
+      "generator": "Ninja",
+      "binaryDir": "${sourceDir}/build-riscv",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Release",
+        "PICO_BOARD": "pico2",
+        "PICO_PLATFORM": "rp2350-riscv",
+        "PICO_SDK_PATH": "${sourceDir}/../../../pico-sdk",
+        "PICO_TOOLCHAIN_PATH": "${sourceDir}/../../../toolchains/riscv-toolchain-16"
+      }
+    },
+    {
+      "name": "mac-pico2-riscv-sweep",
+      "displayName": "RP2350 / Pico 2 Hazard3 physical sweep",
+      "generator": "Ninja",
+      "binaryDir": "${sourceDir}/build-riscv-sweep",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Release",
+        "PICO_BOARD": "pico2",
+        "PICO_PLATFORM": "rp2350-riscv",
+        "PICO_SDK_PATH": "${sourceDir}/../../../pico-sdk",
+        "PICO_TOOLCHAIN_PATH": "${sourceDir}/../../../toolchains/riscv-toolchain-16",
+        "RP2350_BENCH": "bench_nop16_8"
+      }
+    }
+  ],
+  "buildPresets": [
+    {
+      "name": "mac-pico2-local",
+      "configurePreset": "mac-pico2-local",
+      "jobs": 8
+    },
+    {
+      "name": "mac-pico2-sweep",
+      "configurePreset": "mac-pico2-sweep",
+      "jobs": 8
+    },
+    {
+      "name": "mac-pico2-riscv-local",
+      "configurePreset": "mac-pico2-riscv-local",
+      "jobs": 8
+    },
+    {
+      "name": "mac-pico2-riscv-sweep",
+      "configurePreset": "mac-pico2-riscv-sweep",
+      "jobs": 8
+    }
+  ]
+}

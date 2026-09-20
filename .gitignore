@@ -3,6 +3,9 @@ build-gem5/
 build-standalone/
 build-*/
 microbenchmark/build
+microbenchmark/rp2350/build/
+microbenchmark/rp2350/build-sweep/
+microbenchmark/rp2350/results/
 microbenchmark/test/disasm/
 microbenchmark/test/logs/
 benchmark_logs/
