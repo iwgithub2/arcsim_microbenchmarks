@@ -34,6 +34,12 @@ pico_sdk_init()
 find_package(Python3 REQUIRED COMPONENTS Interpreter)
 
 set(INNER_REPS 10 CACHE STRING "Measured repetitions per firmware run")
+option(RP2350_DISABLE_FOLD "Disable Cortex-M33 instruction folding for isolation tests" OFF)
+option(RP2350_CODE_SCRATCH_X "Place selected benchmark kernel and wrapper in SRAM8" OFF)
+option(RP2350_CONTROL_FLASH "Place selected control-flow kernels in XIP flash for isolation tests" OFF)
+if(RP2350_CODE_SCRATCH_X AND RP2350_CONTROL_FLASH)
+    message(FATAL_ERROR "Choose either SRAM8 or XIP placement")
+endif()
 set(RP2350_BENCH "" CACHE STRING
     "Build one selected kernel as the incremental rp2350_benchmark target")
 set(MICROBENCH_ROOT "${CMAKE_CURRENT_LIST_DIR}/..")
@@ -42,8 +48,14 @@ file(GLOB ALU_KERNELS CONFIGURE_DEPENDS
     "${MICROBENCH_ROOT}/kernels/alu/bench_*.S")
 file(GLOB FP_KERNELS CONFIGURE_DEPENDS
     "${MICROBENCH_ROOT}/kernels/fp/bench_*.S")
+file(GLOB CONTROL_KERNELS CONFIGURE_DEPENDS
+    "${MICROBENCH_ROOT}/kernels/control/bench_cf_*.S")
+file(GLOB ISOLATION_KERNELS CONFIGURE_DEPENDS
+    "${MICROBENCH_ROOT}/isolation/bench_iso_*.S")
 file(GLOB RISCV_ALU_KERNELS CONFIGURE_DEPENDS
     "${MICROBENCH_ROOT}/kernels/riscv/alu/bench_*.S")
+file(GLOB RISCV_CONTROL_KERNELS CONFIGURE_DEPENDS
+    "${MICROBENCH_ROOT}/kernels/riscv/control/bench_cf_*.S")
 if(PICO_RISCV)
     # Hazard3 in RP2350 implements no RISC-V F extension. Keep this an
     # instruction microbenchmark suite by excluding, rather than emulating,
@@ -55,9 +67,15 @@ if(PICO_RISCV)
             "Run riscv/generate_kernel.py --all-from ../kernels/alu "
             "--output-dir ../kernels/riscv/alu")
     endif()
-    set(ALL_KERNELS ${RISCV_ALU_KERNELS})
+    list(LENGTH RISCV_CONTROL_KERNELS riscv_control_count)
+    if(NOT riscv_control_count EQUAL 56)
+        message(FATAL_ERROR
+            "Expected 56 materialized Hazard3 control-flow kernels, found ${riscv_control_count}. "
+            "Run ../kernels/riscv/control/generate.py")
+    endif()
+    set(ALL_KERNELS ${RISCV_ALU_KERNELS} ${RISCV_CONTROL_KERNELS})
 else()
-    set(ALL_KERNELS ${ALU_KERNELS} ${FP_KERNELS})
+    set(ALL_KERNELS ${ALU_KERNELS} ${FP_KERNELS} ${CONTROL_KERNELS})
 endif()
 
 function(add_rp2350_benchmark target bench kernel_source)
@@ -90,6 +108,23 @@ function(add_rp2350_benchmark target bench kernel_source)
         PICO_CORE1_STACK_SIZE=0
         INNER_REPS=${INNER_REPS}
     )
+    if(RP2350_DISABLE_FOLD AND NOT PICO_RISCV)
+        target_compile_definitions(${target} PRIVATE RP2350_DISABLE_FOLD=1)
+    endif()
+    if(DEFINED RP2350_ISO_N)
+        target_compile_definitions(${target} PRIVATE ISO_N=${RP2350_ISO_N})
+    endif()
+    set(memory_guard "")
+    if(RP2350_CODE_SCRATCH_X)
+        target_compile_definitions(${target} PRIVATE RP2350_CONTROL_FLOW)
+        list(APPEND memory_guard --require-sram8)
+    elseif(kernel_source MATCHES "/kernels/(riscv/)?control/" AND NOT RP2350_CONTROL_FLASH)
+        target_compile_definitions(${target} PRIVATE RP2350_CONTROL_FLOW)
+        list(APPEND memory_guard --require-sram8)
+    endif()
+    if(RP2350_CONTROL_FLASH)
+        list(APPEND memory_guard --require-xip)
+    endif()
     target_compile_options(${target} PRIVATE
         -Wall
         -Wextra
@@ -101,6 +136,8 @@ function(add_rp2350_benchmark target bench kernel_source)
         hardware_clocks
         hardware_sync
     )
+    target_link_options(${target} PRIVATE
+        "-Wl,-Map=${CMAKE_CURRENT_BINARY_DIR}/${target}.map")
 
     pico_enable_stdio_usb(${target} 1)
     pico_enable_stdio_uart(${target} 0)
@@ -123,13 +160,25 @@ function(add_rp2350_benchmark target bench kernel_source)
             --nm "${CMAKE_NM}"
             --elf "$<TARGET_FILE:${target}>"
             --output "${CMAKE_CURRENT_BINARY_DIR}/${target}.single-core.txt"
+            ${memory_guard}
         VERBATIM
         COMMENT "Verifying ${target} has no core-1 launch path")
 endfunction()
 
 if(RP2350_BENCH)
     set(selected_source "")
-    foreach(kernel_source IN LISTS ALL_KERNELS)
+    unset(RP2350_ISO_N)
+    if(RP2350_BENCH MATCHES "^bench_iso_nop16_([0-9]+)$")
+        set(selected_source "${MICROBENCH_ROOT}/isolation/bench_iso_nop16.S")
+        set(RP2350_ISO_N "${CMAKE_MATCH_1}")
+    elseif(RP2350_BENCH MATCHES "^bench_iso_load_(same|other)_([0-9]+)$")
+        set(selected_source "${MICROBENCH_ROOT}/isolation/bench_iso_load_${CMAKE_MATCH_1}.S")
+        set(RP2350_ISO_N "${CMAKE_MATCH_2}")
+    endif()
+    foreach(kernel_source IN LISTS ALL_KERNELS ISOLATION_KERNELS)
+        if(selected_source)
+            break()
+        endif()
         get_filename_component(bench "${kernel_source}" NAME_WE)
         if(bench STREQUAL RP2350_BENCH)
             set(selected_source "${kernel_source}")
@@ -143,8 +192,15 @@ if(RP2350_BENCH)
     add_rp2350_benchmark(
         rp2350_benchmark "${RP2350_BENCH}" "${selected_source}")
 else()
+    set(CONTROL_TARGETS "")
     foreach(kernel_source IN LISTS ALL_KERNELS)
         get_filename_component(bench "${kernel_source}" NAME_WE)
         add_rp2350_benchmark("${bench}" "${bench}" "${kernel_source}")
+        if(kernel_source MATCHES "/kernels/(riscv/)?control/")
+            list(APPEND CONTROL_TARGETS "${bench}")
+        endif()
     endforeach()
+    if(CONTROL_TARGETS)
+        add_custom_target(rp2350_control_benchmarks DEPENDS ${CONTROL_TARGETS})
+    endif()
 endif()

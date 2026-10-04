@@ -156,7 +156,11 @@
      * start of the warmup + measured-rep loop.
      */
     .macro KERNEL_BEGIN name
-#ifdef BOARD_RP2350
+#ifdef RP2350_CONTROL_FLOW
+        /* Scratch X/SRAM8 is a non-striped bank. The Pico SDK copies this
+         * section from flash before main() runs. */
+        .section .scratch_x.control_wrapper,"ax",%progbits
+#elif defined(BOARD_RP2350)
         /* The Pico SDK's default linker script collects .text* in XIP
          * flash. Prefix the wrapper sections accordingly; the STM32 linker
          * keeps using its historical section names and fixed addresses. */
@@ -173,7 +177,9 @@
 \name :
         START_ROI_SETUP
 
-#ifdef BOARD_RP2350
+#ifdef RP2350_CONTROL_FLOW
+        .section .scratch_x.control_wrapper,"ax",%progbits
+#elif defined(BOARD_RP2350)
         .section .text.bench_entry,"ax",%progbits
 #else
         .section .bench_prologue_snap,"ax",%progbits
@@ -182,7 +188,9 @@
         .thumb
         START_ROI_SNAP
 
-#ifdef BOARD_RP2350
+#ifdef RP2350_CONTROL_FLOW
+        .section .scratch_x.control_wrapper,"ax",%progbits
+#elif defined(BOARD_RP2350)
         .section .text.bench_entry,"ax",%progbits
 #else
         .section .bench_body,"ax",%progbits
@@ -196,7 +204,9 @@
      * KERNEL_END: emit END_ROI in .bench_epilogue then return.
      */
     .macro KERNEL_END
-#ifdef BOARD_RP2350
+#ifdef RP2350_CONTROL_FLOW
+        .section .scratch_x.control_wrapper,"ax",%progbits
+#elif defined(BOARD_RP2350)
         .section .text.bench_entry,"ax",%progbits
 #else
         .section .bench_epilogue,"ax",%progbits
@@ -260,7 +270,11 @@
      * `.rodata.kernel_data` section have a zero-byte data footprint.
      */
     .macro BENCH
+#ifdef RP2350_CONTROL_FLOW
+        .section .scratch_x.control_kernel,"ax",%progbits
+#else
         .section .text.kernel_body,"ax",%progbits
+#endif
         .balign 16
         .syntax unified
         .thumb

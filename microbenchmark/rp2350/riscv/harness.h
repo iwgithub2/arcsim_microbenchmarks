@@ -10,7 +10,11 @@
     .option rvc
 
     .macro RISCV_BENCH
+#ifdef RP2350_CONTROL_FLOW
+        .section .scratch_x.control_kernel,"ax",@progbits
+#else
         .section .text.kernel_body,"ax",@progbits
+#endif
         .p2align 4
         .global kernel_body
         .type kernel_body, @function
@@ -21,7 +25,11 @@ kernel_body:
         ret
         .size kernel_body, . - kernel_body
 
+#ifdef RP2350_CONTROL_FLOW
+        .section .scratch_x.control_wrapper,"ax",@progbits
+#else
         .section .text.bench_entry,"ax",@progbits
+#endif
         .p2align 2
         .global bench_entry
         .type bench_entry, @function

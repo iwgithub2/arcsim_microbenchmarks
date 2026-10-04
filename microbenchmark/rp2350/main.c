@@ -42,6 +42,12 @@ int main(void)
 
 #ifndef PICO_RISCV
     dwt_enable();
+    /* ACTLR.DISFOLD disables the M33's limited dual issue. Keep this outside
+     * the DWT window and print the readback to verify the intervention. */
+#ifdef RP2350_DISABLE_FOLD
+    *(volatile uint32_t *)0xe000e008u |= (1u << 2);
+    __asm__ volatile("dsb\n isb" ::: "memory");
+#endif
 #else
     riscv_cycle_counter_enable();
 #endif
@@ -63,6 +69,11 @@ int main(void)
            get_core_num(), microbench_implementation,
            (unsigned long)clock_get_hz(clk_sys),
            (unsigned)INNER_REPS);
+#ifndef PICO_RISCV
+    printf("MICROBENCH_ACTLR value=0x%08lx disfold=%lu\n",
+           (unsigned long)*(volatile uint32_t *)0xe000e008u,
+           (unsigned long)((*(volatile uint32_t *)0xe000e008u >> 2) & 1u));
+#endif
     for (uint32_t i = 0; i < INNER_REPS; ++i) {
         printf("MICROBENCH name=%s rep=%lu inner=%lu\n",
                microbench_name, (unsigned long)i,

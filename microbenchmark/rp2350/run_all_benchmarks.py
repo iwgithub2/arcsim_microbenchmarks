@@ -27,6 +27,12 @@ from run_benchmark import CaptureResult, capture_available_port, flash_uf2
 
 ROOT = Path(__file__).resolve().parent
 KERNEL_ROOT = ROOT.parent / "kernels"
+RESULTS_ROOT = ROOT.parents[1] / "results" / "hardware"
+CATEGORY_DIRS = {
+    "alu": "arithmetic",
+    "fp": "floating-point",
+    "control": "control-flow",
+}
 SUMMARY_FIELDS = [
     "timestamp_utc", "category", "benchmark", "board", "core", "sys_hz",
     "reps", "min_cycles", "mean_cycles", "median_cycles", "max_cycles",
@@ -62,9 +68,11 @@ def discover_kernels(architecture: str) -> list[Kernel]:
     kernels = []
     if architecture == "riscv":
         sources = sorted(KERNEL_ROOT.glob("riscv/alu/bench_*.S"))
+        sources += sorted(KERNEL_ROOT.glob("riscv/control/bench_cf_*.S"))
     else:
         sources = sorted(KERNEL_ROOT.glob("alu/bench_*.S"))
         sources += sorted(KERNEL_ROOT.glob("fp/bench_*.S"))
+        sources += sorted(KERNEL_ROOT.glob("control/bench_cf_*.S"))
     for source in sources:
         kernels.append(Kernel(source.parent.name, source.stem, source))
     return kernels
@@ -86,11 +94,16 @@ def parse_args() -> argparse.Namespace:
         "--preset",
         help="CMake preset (selected from --architecture by default)",
     )
+    parser.add_argument(
+        "--placement", choices=("default", "xip", "sram8"),
+        default="default",
+        help="Code placement; default is XIP for ALU/FP and SRAM8 for control",
+    )
     parser.add_argument("--port", help="USB CDC path (auto-detected by default)")
     parser.add_argument("--timeout-s", type=float, default=30.0)
     parser.add_argument("--retries", type=int, default=2)
     parser.add_argument(
-        "--category", action="append", choices=("alu", "fp"),
+        "--category", action="append", choices=("alu", "fp", "control"),
         help="Limit to one or more categories",
     )
     parser.add_argument(
@@ -116,19 +129,26 @@ def command_output(cmd: list[str], *, check: bool = True) -> str:
 
 
 def configure_and_build(
-    kernel: Kernel, preset: str, build_dir: Path
+    kernel: Kernel, preset: str, build_dir: Path, placement: str
 ) -> tuple[Path, str]:
-    configure_log = command_output([
+    scratch = "ON" if placement == "sram8" else "OFF"
+    control_flash = "ON" if placement == "xip" else "OFF"
+    configure_cmd = [
         "cmake", "--preset", preset, f"-DRP2350_BENCH={kernel.name}",
-    ])
-    build_log = command_output([
+        f"-DRP2350_CODE_SCRATCH_X={scratch}",
+        f"-DRP2350_CONTROL_FLASH={control_flash}",
+    ]
+    configure_log = command_output(configure_cmd)
+    build_cmd = [
         "cmake", "--build", "--preset", preset,
         "--target", "rp2350_benchmark",
-    ])
+    ]
+    build_log = command_output(build_cmd)
     uf2 = build_dir / "rp2350_benchmark.uf2"
     if not uf2.exists():
         raise RuntimeError(f"build succeeded but UF2 is missing: {uf2}")
-    return uf2, f"$ cmake configure\n{configure_log}\n\n$ cmake build\n{build_log}\n"
+    return uf2, (f"$ {' '.join(configure_cmd)}\n{configure_log}\n\n"
+                 f"$ {' '.join(build_cmd)}\n{build_log}\n")
 
 
 def ensure_csv(path: Path, fields: list[str]) -> None:
@@ -179,6 +199,7 @@ def write_manifest(
         "host": platform.platform(),
         "preset": args.preset,
         "architecture": args.architecture,
+        "placement": args.placement,
         "single_core": True,
         "expected_core_id": 0,
         "active_core_count": 1,
@@ -330,14 +351,11 @@ def main() -> int:
             if args.architecture == "riscv"
             else "mac-pico2-sweep"
         )
-    if args.output_dir is None:
-        stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
-        args.output_dir = ROOT / "results" / f"rp2350-{args.architecture}-{stamp}"
     build_dir = ROOT / (
         "build-riscv-sweep" if args.architecture == "riscv" else "build-sweep"
     )
     kernels = discover_kernels(args.architecture)
-    available_count = 56 if args.architecture == "riscv" else 184
+    available_count = 112 if args.architecture == "riscv" else 240
     if len(kernels) != available_count:
         raise SystemExit(
             f"expected {available_count} {args.architecture} kernels, "
@@ -366,6 +384,18 @@ def main() -> int:
         kernels = kernels[names.index(args.start_at):]
     if args.limit is not None:
         kernels = kernels[:args.limit]
+
+    if args.output_dir is None:
+        stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+        categories = {kernel.category for kernel in kernels}
+        category_dir = (
+            CATEGORY_DIRS[next(iter(categories))] if len(categories) == 1
+            else "mixed"
+        )
+        args.output_dir = (
+            RESULTS_ROOT / args.architecture / category_dir
+            / f"rp2350-{args.architecture}-{stamp}"
+        )
 
     print(
         f"Selected {len(kernels)} of {available_count} RP2350 "
@@ -396,6 +426,7 @@ def main() -> int:
 
     failures = 0
     completed_this_run = 0
+    device_lost = False
     total = len(pending)
     for index, kernel in enumerate(pending, 1):
         print(f"[{index:03d}/{total:03d}] {kernel.category}/{kernel.name}", flush=True)
@@ -408,7 +439,7 @@ def main() -> int:
             started = time.monotonic()
             try:
                 uf2, build_log = configure_and_build(
-                    kernel, args.preset, build_dir
+                    kernel, args.preset, build_dir, args.placement
                 )
                 firmware_hash = sha256(uf2)
                 flash_log = flash_uf2(uf2, update=True)
@@ -434,10 +465,14 @@ def main() -> int:
                         f"non-contiguous repetitions: {result.reps}"
                     )
                 elapsed = time.monotonic() - started
+                placement_proof = (
+                    build_dir / "rp2350_benchmark.single-core.txt"
+                ).read_text()
                 log_path.write_text(
                     f"benchmark={kernel.name}\ncategory={kernel.category}\n"
                     f"attempt={attempt}\nport={port}\n\n"
-                    f"{build_log}\n$ picotool load\n{flash_log}\n"
+                    f"{build_log}\n$ placement and core proof\n{placement_proof}\n"
+                    f"$ picotool load\n{flash_log}\n"
                     f"$ usb serial\n{result.raw_text}"
                 )
                 save_success(
@@ -456,9 +491,13 @@ def main() -> int:
                     flush=True,
                 )
                 completed_this_run += 1
+                device_lost = False
                 break
             except Exception as exc:
                 message = f"{type(exc).__name__}: {exc}"
+                if ("No accessible RP-series devices" in message
+                        or "USB serial port never became usable" in message):
+                    device_lost = True
                 error_messages.append(f"attempt {attempt}: {message}")
                 append_csv(errors_path, ERROR_FIELDS, [{
                     "timestamp_utc": utc_now(),
@@ -481,6 +520,9 @@ def main() -> int:
             completed=len(already_done) + completed_this_run,
             failed=failures,
         )
+        if device_lost and error_messages:
+            print("Pico 2 disconnected; stopping the resumable sweep.", flush=True)
+            break
 
     print(
         f"Sweep complete: {completed_this_run} newly completed, "

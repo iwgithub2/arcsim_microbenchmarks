@@ -173,6 +173,11 @@ def main() -> int:
         ) from exc
     print(flash_output, end="" if flash_output.endswith("\n") else "\n")
     port, result = capture_available_port(args.bench, deadline, args.port)
+    if result.core_id != 0 or result.active_cores != 1:
+        raise SystemExit(
+            f"refusing non-single-core result: core_id={result.core_id}, "
+            f"active_cores={result.active_cores}"
+        )
     print(f"Capturing {port} ...")
     print(result.raw_text, end="" if result.raw_text.endswith("\n") else "\n")
     values = [cycles for _, cycles in result.reps]
