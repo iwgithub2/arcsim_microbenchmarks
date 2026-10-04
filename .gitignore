@@ -6,6 +6,8 @@ microbenchmark/build
 microbenchmark/rp2350/build/
 microbenchmark/rp2350/build-sweep/
 microbenchmark/rp2350/results/
+results/*
+!results/README.md
 microbenchmark/test/disasm/
 microbenchmark/test/logs/
 benchmark_logs/
@@ -29,3 +31,6 @@ verification/reference/
 
 # Claude Code local state (agent notes, scheduled tasks, settings)
 .claude/
+
+# Local weekly presentation packet and copies of project notes
+weekly-update/
